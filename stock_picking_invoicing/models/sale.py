@@ -14,17 +14,19 @@ class SaleOrder(models.Model):
         """
         super()._get_invoiced()
         for order in self:
-            invoices = order.order_line.move_ids.invoice_line_ids.move_id.filtered(
+            linked_invoice_ids = order.invoice_ids
+            new_invoice_ids = order.order_line.move_ids.invoice_line_ids.move_id.filtered(
                 lambda r: r.move_type in ("out_invoice", "out_refund")
             )
-            order.invoice_ids = [(6, 0, invoices.ids)]
-            order.invoice_count = len(invoices)
+            linked_invoice_ids |= new_invoice_ids
+            order.invoice_ids = [(6, 0, list(set(linked_invoice_ids.ids)))]
+            order.invoice_count = len(linked_invoice_ids)
 
 
 class SaleOrderLine(models.Model):
     _inherit = "sale.order.line"
 
-    @api.depends("move_ids.invoice_line_ids.move_id.state")
+    @api.depends("move_ids.invoice_line_ids.move_id.state", "move_ids.invoice_line_ids.quantity", "invoice_lines.move_id.state", "invoice_lines.quantity")
     def _get_invoice_qty(self):
         """
         Override to get the quantity invoiced related to the stock moves of the sale order
@@ -32,7 +34,9 @@ class SaleOrderLine(models.Model):
         super()._get_invoice_qty()
         for line in self:
             qty_invoiced = 0.0
-            for invoice_line in line.move_ids.invoice_line_ids:
+            invoice_lines = line.invoice_lines
+            invoice_lines |= line.move_ids.invoice_line_ids
+            for invoice_line in invoice_lines:
                 if invoice_line.move_id.state != "cancel":
                     if invoice_line.move_id.move_type == "out_invoice":
                         qty_invoiced += invoice_line.product_uom_id._compute_quantity(
